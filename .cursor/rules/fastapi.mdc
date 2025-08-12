@@ -1,0 +1,373 @@
+---
+description: Develop features and modules in fastapi
+globs: 
+alwaysApply: false
+---
+# FastAPI Development Rules
+
+## Project & Architecture
+
+### R1. Structure
+
+**MUST** use this layout (or equivalent):
+
+```bash
+app/
+  core/         # config, security, lifespan, logging
+  api/          # routers, dependencies, response schemas
+    v1/
+      routers/
+      deps.py
+      schemas.py
+  services/     # business logic (framework-agnostic)
+  repositories/ # DB CRUD (SQLAlchemy/Motor)
+  models/       # ORM models (if SQLAlchemy)
+  tasks/        # background workers, schedulers
+  utils/
+  __init__.py
+tests/
+```
+
+**MUST** keep services independent of FastAPI (no Depends inside services).
+
+### R2. Typing & Style
+
+**MUST** type-hint everything.
+
+**MUST** use ruff + black + mypy (strict mode for app code).
+
+**SHOULD** add pre-commit hooks.
+
+## Configuration & Secrets
+
+### R3. Settings
+
+**MUST** load config with Pydantic Settings:
+
+```python
+class Settings(BaseSettings):
+    app_name: str = "svc"
+    env: Literal["dev","stg","prod"] = "dev"
+    mongo_uri: AnyUrl
+    sql_dsn: str | None = None
+    jwt_secret: SecretStr
+    class Config: env_file = ".env"
+
+settings = Settings()
+```
+
+**MUST NOT** hardcode secrets; **MUST** use env vars/secret stores.
+
+## Lifespan & Singletons
+
+### R4. App-wide Resources
+
+**MUST** initialize long-lived resources in lifespan, store on app.state, and close on shutdown.
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.mongo = AsyncIOMotorClient(settings.mongo_uri)
+    yield
+    app.state.mongo.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+**AVOID** module-level global clients (reload/multi-worker pitfalls).
+
+## Dependency Injection (DI)
+
+### R5. DI Rules
+
+**MUST** inject per-request resources via Depends, never create them inside route.
+
+**MUST** keep DI thin: compose request context, auth, DB handles/sessions.
+
+**MUST** use yield only when cleanup is required.
+
+### R6. Examples
+
+**Motor** (no per-request cleanup):
+
+```python
+def get_db(request: Request) -> AsyncIOMotorDatabase:
+    return request.app.state.mongo["appdb"]
+```
+
+**SQLAlchemy** (per-request session):
+
+```python
+async def get_session() -> AsyncIterator[AsyncSession]:
+    async with async_sessionmaker()() as s:
+        yield s
+```
+
+## Routers & Handlers
+
+### R7. Router Conventions
+
+**MUST** register routers under `/api/v{N}` with tags and prefix.
+
+**MUST** specify response_model, status_code, and precise parameter types.
+
+**MUST** limit route functions to orchestration; delegate to services.
+
+### R8. I/O Contracts
+
+**MUST** define request/response models (Pydantic) in `api/.../schemas.py`.
+
+**SHOULD** use `Annotated[...]` for validation/metadata on params.
+
+## Models & Validation
+
+### R9. Pydantic
+
+**MUST** separate persistence models (ORM) from API schemas.
+
+**SHOULD** enable `ConfigDict(from_attributes=True)` on read schemas.
+
+### R10. Validation
+
+**MUST** use Pydantic validators for invariants (IDs, enums).
+
+**SHOULD** centralize common field types (EmailStr, HttpUrl, UUID).
+
+## Database Layer
+
+### R11. SQLAlchemy (async)
+
+**MUST** use AsyncEngine + async_sessionmaker.
+
+**MUST** pass AsyncSession from DI into repo functions.
+
+**SHOULD** wrap multi-step write logic in `async with session.begin():`.
+
+### R12. Mongo (Motor)
+
+**MUST** create one AsyncIOMotorClient in lifespan.
+
+**SHOULD** inject AsyncIOMotorDatabase per request.
+
+**SHOULD** use sessions/transactions only when necessary (replica set).
+
+## Auth & Security
+
+### R13. Authentication
+
+**MUST** implement OAuth2 password bearer or JWT bearer dependency.
+
+**MUST** extract user in dependency and inject CurrentUser object.
+
+**SHOULD** support API key for internal services.
+
+### R14. Security Headers & CORS
+
+**MUST** enable CORS explicitly (origins from config).
+
+**SHOULD** add security headers via middleware (e.g., X-Content-Type-Options, X-Frame-Options, Referrer-Policy).
+
+## Errors & Responses
+
+### R15. Error Handling
+
+**MUST** normalize errors using `HTTPException(status_code, detail)` or custom exception handlers.
+
+**MUST NOT** leak internal traces in prod responses.
+
+**SHOULD** map domain errors → HTTP codes (e.g., NotFound → 404, Conflict → 409).
+
+### R16. Responses
+
+**MUST** return typed models; avoid raw dicts (except trivial cases).
+
+**SHOULD** use ORJSONResponse for performance.
+
+## Background Work
+
+### R17. Background Tasks
+
+**MUST** keep FastAPI BackgroundTasks for short, idempotent jobs only.
+
+**SHOULD** use a proper queue (Celery, RQ, Arq, Dramatiq) for longer tasks.
+
+**MUST** pass only IDs/messages to tasks; re-fetch data inside the worker.
+
+## Performance & Concurrency
+
+### R18. Async Correctness
+
+**MUST** use async drivers in async endpoints (HTTPX AsyncClient, async DB).
+
+**MUST** avoid blocking calls; if unavoidable, offload to threadpool (run_in_executor).
+
+### R19. Limits
+
+**SHOULD** paginate lists by default (limit, offset/cursor).
+
+**SHOULD** set timeouts on outbound calls and DB operations.
+
+**SHOULD** support ETags/If-None-Match for large GETs where relevant.
+
+## Versioning & Stability
+
+### R20. API Versioning
+
+**MUST** version routes (`/api/v1`).
+
+**MUST** not break schemas within the same major version.
+
+### R21. Idempotency
+
+**SHOULD** make POST operations idempotent where possible (Idempotency-Key).
+
+## Documentation
+
+### R22. OpenAPI Hygiene
+
+**MUST** annotate summaries/descriptions, request/response models, and examples.
+
+**SHOULD** expose Swagger UI for internal use and Redoc for external reference.
+
+**SHOULD** document auth flows and error shapes.
+
+## Observability
+
+### R23. Logging
+
+**MUST** use structured logging (JSON) with request IDs.
+
+**SHOULD** log at boundaries: inbound request, outbound call, DB op errors.
+
+### R24. Metrics & Tracing
+
+**SHOULD** expose `/healthz` (liveness) and `/readyz` (readiness).
+
+**SHOULD** integrate Prometheus metrics & OpenTelemetry tracing in prod.
+
+## Testing
+
+### R25. Tests
+
+**MUST** use pytest with httpx.AsyncClient/TestClient.
+
+**MUST** use dependency overrides for DB/auth in tests:
+
+```python
+app.dependency_overrides[get_db] = get_test_db
+```
+
+**SHOULD** seed ephemeral DB per test (transaction rollbacks or test containers).
+
+## Packaging & Deployment
+
+### R26. Server
+
+**MUST** run with uvicorn behind a reverse proxy.
+
+**SHOULD** avoid `--reload` in prod; use multiple workers and readiness probes.
+
+### R27. Docker
+
+**MUST** use slim Python base, multi-stage installs, non-root user.
+
+**SHOULD** pin dependencies and enable `pip --no-cache-dir`.
+
+## Code Quality & Safety
+
+### R28. Linting & CI
+
+**MUST** run ruff, mypy, tests, and security scans (bandit, pip-audit) in CI.
+
+**SHOULD** enforce coverage thresholds.
+
+### R29. Inputs & Security
+
+**MUST** validate all inputs (query, path, body, headers).
+
+**MUST** sanitize file uploads and limit size.
+
+**MUST** never echo secrets back; scrub logs.
+
+## AI Agent Actionable Playbook
+
+When generating a new endpoint, the agent **MUST**:
+
+### Scaffold
+
+1. Create schema(s): CreateX, X, XList.
+2. Add router with response_model, status_code.
+3. Add DI for DB and CurrentUser.
+
+### Implement
+
+1. Route → call service → repository.
+2. Validate inputs; map domain errors to HTTPException.
+3. Add pagination for list endpoints.
+
+### Wire
+
+1. Register router under `/api/v1`.
+2. Add OpenAPI descriptions/examples.
+3. Add tests (success, validation error, not found, auth fail).
+
+### Guardrails
+
+- No globals for live clients; use lifespan.
+- No blocking I/O in async routes.
+- No secrets in code; use Settings.
+- Log request id, duration, and errors.
+
+## Minimal Golden Snippets
+
+### Lifespan Singleton
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.mongo = AsyncIOMotorClient(settings.mongo_uri)
+    yield
+    app.state.mongo.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+### DI
+
+```python
+def get_db(request: Request) -> AsyncIOMotorDatabase:
+    return request.app.state.mongo["appdb"]
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    async with async_sessionmaker()() as s:
+        yield s
+```
+
+### Router
+
+```python
+router = APIRouter(prefix="/items", tags=["items"])
+
+@router.post("/", response_model=Item, status_code=201)
+async def create_item(
+    body: ItemCreate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: CurrentUser = Depends(require_user),
+):
+    return await item_service.create(db, user.id, body)
+```
+
+### Service (framework-agnostic)
+
+```python
+async def create(db: AsyncIOMotorDatabase, user_id: str, data: ItemCreate) -> Item:
+    doc = {...}
+    inserted = await db["items"].insert_one(doc)
+    return Item(id=str(inserted.inserted_id), **doc)
+```
+
+### Tests (override dep)
+
+```python
+app.dependency_overrides[get_db] = lambda: test_client["testdb"]
+```
