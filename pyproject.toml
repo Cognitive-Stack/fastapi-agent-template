@@ -38,6 +38,9 @@ dev = [
     "pip-audit>=2.6.1",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 88

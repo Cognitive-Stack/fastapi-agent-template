@@ -21,7 +21,9 @@ async def register(
     """Register a new user account."""
     auth_service = AuthService(db)
     user = await auth_service.register_user(user_data)
-    return UserResponse(**user.model_dump())
+    user_data = user.model_dump(mode="json")
+    user_data["id"] = str(user_data["id"])
+    return UserResponse(**user_data)
 
 
 @router.post("/login", response_model=Token, summary="Login user")
