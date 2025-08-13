@@ -142,15 +142,12 @@ class SocketIOService:
                 
                 # Process message through chat service
                 chat_response = await self.chat_service.process_message(user_id, chat_request)
-                chat_response_json = chat_response.model_dump()
-                chat_response_json["user_message"]["created_at"] = chat_response_json["user_message"]["created_at"].isoformat() if chat_response_json["user_message"]["created_at"] else None
                 # Convert to dict for socket emission
                 response_data = {
                     'task_id': chat_response.task_id,
                     'conversation_id': chat_response.conversation_id,
-                    'user_message': chat_response_json["user_message"],
+                    'user_message': chat_response.user_message.model_dump() if chat_response.user_message else None,
                     'assistant_responses': [msg.model_dump() for msg in chat_response.assistant_responses],
-                    'timestamp': chat_response.user_message.created_at.isoformat() if chat_response.user_message else None
                 }
                 
                 # Send response back to client via 'conversation' event

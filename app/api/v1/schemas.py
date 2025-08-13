@@ -100,7 +100,7 @@ class ChatMessageResponse(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
     metadata: dict
-    created_at: datetime
+    timestamp: float  # Unix timestamp
 
 
 class TaskCreate(BaseModel):
