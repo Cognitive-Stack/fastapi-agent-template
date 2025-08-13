@@ -76,7 +76,7 @@ The `SocketIOService` class handles all Socket.IO functionality:
 Socket.IO connections require JWT authentication:
 
 ```javascript
-const socket = io('http://localhost:8001', {
+const socket = io('http://localhost:8000', {
     auth: {
         token: 'your_jwt_token_here'
     }
@@ -91,7 +91,7 @@ The server validates the token and stores the user session for subsequent events
 
 ```javascript
 // Connect with authentication
-const socket = io('http://localhost:8001', {
+const socket = io('http://localhost:8000', {
     auth: { token: jwtToken }
 });
 
@@ -149,7 +149,7 @@ async def error(data):
     print(f"Error: {data['message']}")
 
 async def main():
-    await sio.connect('http://localhost:8001', auth={'token': 'your_jwt_token'})
+    await sio.connect('http://localhost:8000', auth={'token': 'your_jwt_token'})
     
     # Send a message
     await sio.emit('chat', {
@@ -167,7 +167,7 @@ if __name__ == '__main__':
 
 ### Test Client
 
-Access the built-in test client at: `http://localhost:8001/static/socketio_test.html`
+Access the built-in test client at: `http://localhost:8000/static/socketio_test.html`
 
 Features:
 - Login to get JWT token
@@ -181,7 +181,7 @@ Features:
 
 1. **Start the server**:
    ```bash
-   uv run uvicorn main:app --reload --port 8001
+   uv run uvicorn main:app --reload --port 8000
    ```
 
 2. **Create a test user**:
@@ -189,7 +189,7 @@ Features:
    uv run python create_test_user.py
    ```
 
-3. **Open test client**: Visit `http://localhost:8001/static/socketio_test.html`
+3. **Open test client**: Visit `http://localhost:8000/static/socketio_test.html`
 
 4. **Login**: Use credentials `testuser` / `testpass123`
 
@@ -217,7 +217,7 @@ async def socket_client():
     
     # Create Socket.IO client
     sio = socketio.AsyncClient()
-    await sio.connect('http://localhost:8001', auth={'token': token})
+    await sio.connect('http://localhost:8000', auth={'token': token})
     yield sio
     await sio.disconnect()
 
@@ -241,7 +241,7 @@ async def test_chat_message(socket_client):
 
 ```env
 # CORS for Socket.IO (adjust as needed)
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080,http://localhost:8001
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080,http://localhost:8000
 ```
 
 ### Socket.IO Server Options
