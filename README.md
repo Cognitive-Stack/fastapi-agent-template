@@ -67,7 +67,12 @@ cp .env.example .env
 
 5. **Start MongoDB**
 ```bash
-sudo systemctl start mongodb
+docker run -d \
+  --name mongodb \
+  -e MONGO_INITDB_ROOT_USERNAME=admin \
+  -e MONGO_INITDB_ROOT_PASSWORD=password \
+  -p 27017:27017 \
+  mongo:latest
 ```
 
 6. **Run the application**
@@ -87,7 +92,7 @@ ENV=dev
 DEBUG=true
 
 # Database
-MONGO_URI=mongodb://localhost:27017
+MONGO_URI=mongodb://admin:password@localhost:27017/?authSource=admin&authMechanism=SCRAM-SHA-256
 MONGO_DB_NAME=chatbot_db
 
 # Security
