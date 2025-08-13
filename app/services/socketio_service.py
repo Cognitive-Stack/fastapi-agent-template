@@ -141,20 +141,7 @@ class SocketIOService:
                 )
                 
                 # Process message through chat service
-                chat_response = await self.chat_service.process_message(user_id, chat_request)
-                # Convert to dict for socket emission
-                response_data = {
-                    'task_id': chat_response.task_id,
-                    'conversation_id': chat_response.conversation_id,
-                    'user_message': chat_response.user_message.model_dump() if chat_response.user_message else None,
-                    'assistant_responses': [msg.model_dump() for msg in chat_response.assistant_responses],
-                }
-                
-                # Send response back to client via 'conversation' event
-                room_name = f"user_{user_id}"
-                await self.sio.emit('conversation', response_data, room=room_name)
-                
-                logger.info(f"Chat response sent to user {user_id} for task {chat_response.task_id}")
+                await self.chat_service.process_message(user_id, chat_request)
                 
             except Exception as e:
                 logger.error(f"Chat error for session {sid}: {e}")

@@ -2,6 +2,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.v1.schemas import ChatRequest, ChatResponse, TaskCreate, ChatMessageResponse
 from app.services.task import TaskService
 from app.services.conversation import ConversationService
+from app.agents.soulcare_team import SoulcareTeam
 
 
 class ChatService:
@@ -25,16 +26,7 @@ class ChatService:
             user_id=user_id,
             task_data=task_data
         )
-        user_message = task.messages[0] if task.messages else None
-        user_message_json = user_message.model_dump()
-        user_message_json['id'] = str(user_message_json['id'])
-        user_message_json['timestamp'] = user_message_json['created_at'].timestamp() if user_message_json['created_at'] else None
 
-        response = ChatResponse(
-            task_id=str(task.id),
-            conversation_id=str(task.conversation_id),
-            user_message=ChatMessageResponse(**user_message_json) if user_message else None,
-            assistant_responses=[]
-        )   
-        
-        return response 
+        soulcare_team = SoulcareTeam()
+
+        await soulcare_team.start(task)

@@ -68,4 +68,7 @@ class Task(BaseDocument):
     actual_duration: Optional[int] = Field(None, description="Actual duration in minutes")
     
     # Additional metadata
-    metadata: dict = Field(default_factory=dict, description="Additional task metadata") 
+    metadata: dict = Field(default_factory=dict, description="Additional task metadata")
+
+    # State from agent
+    state: dict = Field(default_factory=dict, description="State from agent")

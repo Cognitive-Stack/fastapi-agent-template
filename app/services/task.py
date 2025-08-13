@@ -39,19 +39,11 @@ class TaskService:
             )
             conversation_id = str(conversation.id)
         
-        # Create the initial user message
-        user_message = ChatMessage(
-            role="user",
-            content=task_data.user_message,
-            metadata=task_data.metadata
-        )
-        
         # Create task data
         task_dict = {
             "conversation_id": ObjectId(conversation_id),
             "user_id": ObjectId(user_id),
             "user_message": task_data.user_message,
-            "messages": [user_message.model_dump()],
             "status": "pending",
             "priority": task_data.priority,
             "category": task_data.category,
