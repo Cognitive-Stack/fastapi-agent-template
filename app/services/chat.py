@@ -27,11 +27,12 @@ class ChatService:
         )
         
         user_message = task.messages[0] if task.messages else None
-        
+        user_message_json = user_message.model_dump()
+        user_message_json["id"] = str(user_message_json["id"])   
         response = ChatResponse(
             task_id=str(task.id),
             conversation_id=str(task.conversation_id),
-            user_message=ChatMessageResponse(**user_message.model_dump()) if user_message else None,
+            user_message=ChatMessageResponse(**user_message_json) if user_message else None,
             assistant_responses=[]
         )
         

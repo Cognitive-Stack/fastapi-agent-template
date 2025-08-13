@@ -20,12 +20,14 @@ app/
       deps.py
       schemas.py
   services/     # business logic (framework-agnostic)
+    socketio_service.py  # Socket.IO real-time functionality
   repositories/ # DB CRUD (SQLAlchemy/Motor)
   models/       # ORM models (if SQLAlchemy)
   tasks/        # background workers, schedulers
   utils/
   __init__.py
 tests/
+static/         # Static files for Socket.IO test clients
 ```
 
 **MUST** keep services independent of FastAPI (no Depends inside services).
@@ -47,6 +49,9 @@ tests/
 ```bash
 # Initialize project
 uv sync
+
+# Add Socket.IO support
+uv add python-socketio
 
 # Run application
 uv run uvicorn main:app --reload
@@ -141,6 +146,11 @@ class PyObjectId(ObjectId):
 async def lifespan(app: FastAPI):
     app.state.mongo = AsyncIOMotorClient(settings.mongo_uri)
     app.state.settings = settings
+    
+    # Initialize Socket.IO service
+    db = app.state.mongo[settings.mongo_db_name]
+    app.state.socketio_service = SocketIOService(db)
+    
     yield
     app.state.mongo.close()
 
@@ -148,6 +158,57 @@ app = FastAPI(lifespan=lifespan)
 ```
 
 **AVOID** module-level global clients (reload/multi-worker pitfalls).
+
+## Real-time Communication
+
+### R4a. Socket.IO Integration
+
+**SHOULD** use Socket.IO for real-time features:
+
+```python
+import socketio
+from app.services.chat import ChatService
+from app.core.security import verify_token
+
+class SocketIOService:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.db = db
+        self.chat_service = ChatService(db)
+        self.sio = socketio.AsyncServer(
+            async_mode='asgi',
+            cors_allowed_origins="*"
+        )
+        self.user_sessions: Dict[str, str] = {}
+        self._register_handlers()
+    
+    def _register_handlers(self):
+        @self.sio.event
+        async def connect(sid, environ, auth):
+            # Authenticate user with JWT
+            token = auth.get('token')
+            payload = verify_token(token)
+            user_id = payload.get("sub")
+            
+            self.user_sessions[sid] = user_id
+            await self.sio.enter_room(sid, f"user_{user_id}")
+            
+        @self.sio.event
+        async def chat(sid, data):
+            user_id = self.user_sessions.get(sid)
+            chat_request = ChatRequest(**data)
+            response = await self.chat_service.process_message(user_id, chat_request)
+            
+            await self.sio.emit('conversation', response.model_dump(), room=sid)
+```
+
+**MUST** mount Socket.IO after app startup:
+
+```python
+@app.on_event("startup")
+async def mount_socketio():
+    socketio_asgi = app.state.socketio_service.get_asgi_app()
+    app.mount("/socket.io", socketio_asgi)
+```
 
 ## Dependency Injection (DI)
 
@@ -255,6 +316,24 @@ task_dict = task_data.model_dump()  # Not .dict()
 
 **SHOULD** support API key for internal services.
 
+**Socket.IO Authentication:**
+
+```python
+@self.sio.event
+async def connect(sid, environ, auth):
+    if not auth or 'token' not in auth:
+        await self.sio.disconnect(sid)
+        return False
+    
+    token = auth['token']
+    payload = verify_token(token)
+    user_id = payload.get("sub")
+    
+    # Store session and join user room
+    self.user_sessions[sid] = user_id
+    await self.sio.enter_room(sid, f"user_{user_id}")
+```
+
 ### R14. Security Headers & CORS
 
 **MUST** enable CORS explicitly (origins from config).
@@ -270,6 +349,19 @@ task_dict = task_data.model_dump()  # Not .dict()
 **MUST NOT** leak internal traces in prod responses.
 
 **SHOULD** map domain errors → HTTP codes (e.g., NotFound → 404, Conflict → 409).
+
+**Socket.IO Error Handling:**
+
+```python
+@self.sio.event
+async def chat(sid, data):
+    try:
+        # Process message
+        response = await self.chat_service.process_message(user_id, chat_request)
+        await self.sio.emit('conversation', response.model_dump(), room=sid)
+    except Exception as e:
+        await self.sio.emit('error', {'message': str(e)}, room=sid)
+```
 
 ### R16. Responses
 
@@ -325,6 +417,22 @@ task_dict = task_data.model_dump()  # Not .dict()
 
 **SHOULD** document auth flows and error shapes.
 
+**Socket.IO Documentation:**
+
+```python
+@app.get("/socket-info", tags=["socketio"])
+async def socket_info():
+    return {
+        "socket_url": "/socket.io",
+        "test_client": "/static/socketio_test.html",
+        "events": {
+            "client_to_server": {"chat": "Send a chat message"},
+            "server_to_client": {"conversation": "Chat response received"}
+        },
+        "authentication": "Include JWT token in auth object"
+    }
+```
+
 ## Observability
 
 ### R23. Logging
@@ -352,6 +460,16 @@ app.dependency_overrides[get_db] = get_test_db
 ```
 
 **SHOULD** seed ephemeral DB per test (transaction rollbacks or test containers).
+
+**Socket.IO Testing:**
+
+```python
+# Create test client for Socket.IO
+sio_client = socketio.AsyncClient()
+await sio_client.connect('http://localhost:8001', auth={'token': test_token})
+await sio_client.emit('chat', {'message': 'Hello!'})
+response = await sio_client.receive()
+```
 
 ## Packaging & Deployment
 
@@ -409,6 +527,23 @@ When migrating to Pydantic v2, **MUST** complete:
 - [ ] Fix response models: `ConfigDict(from_attributes=True)`
 - [ ] Test all model creation and serialization
 
+## Socket.IO Implementation Checklist
+
+### R31. Real-time Features
+
+When implementing Socket.IO, **MUST** complete:
+
+- [ ] Add `python-socketio` dependency
+- [ ] Create `SocketIOService` with authentication
+- [ ] Mount Socket.IO ASGI app after startup
+- [ ] Implement event handlers: `connect`, `disconnect`, `chat`
+- [ ] Add user session management and rooms
+- [ ] Handle errors gracefully with `error` events
+- [ ] Create test client for development
+- [ ] Document Socket.IO events and authentication
+- [ ] Add static file serving for test clients
+- [ ] Integrate with existing chat services
+
 ## AI Agent Actionable Playbook
 
 When generating a new endpoint, the agent **MUST**:
@@ -418,6 +553,7 @@ When generating a new endpoint, the agent **MUST**:
 1. Create schema(s): CreateX, X, XList with Pydantic v2 syntax.
 2. Add router with response_model, status_code.
 3. Add DI for DB and CurrentUser.
+4. Consider Socket.IO real-time updates if applicable.
 
 ### Implement
 
@@ -425,12 +561,14 @@ When generating a new endpoint, the agent **MUST**:
 2. Use `model_dump()` for serialization.
 3. Validate inputs; map domain errors to HTTPException.
 4. Add pagination for list endpoints.
+5. Emit Socket.IO events for real-time updates.
 
 ### Wire
 
 1. Register router under `/api/v1`.
 2. Add OpenAPI descriptions/examples.
 3. Add tests (success, validation error, not found, auth fail).
+4. Add Socket.IO event tests if applicable.
 
 ### Guardrails
 
@@ -438,6 +576,7 @@ When generating a new endpoint, the agent **MUST**:
 - No blocking I/O in async routes.
 - No secrets in code; use Settings.
 - Use Pydantic v2 syntax throughout.
+- Authenticate Socket.IO connections with JWT.
 - Log request id, duration, and errors.
 
 ## Minimal Golden Snippets
@@ -448,6 +587,11 @@ When generating a new endpoint, the agent **MUST**:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.mongo = AsyncIOMotorClient(settings.mongo_uri)
+    
+    # Initialize Socket.IO
+    db = app.state.mongo[settings.mongo_db_name]
+    app.state.socketio_service = SocketIOService(db)
+    
     yield
     app.state.mongo.close()
 
@@ -489,6 +633,22 @@ async def create(db: AsyncIOMotorDatabase, user_id: str, data: ItemCreate) -> It
     return Item(id=str(inserted.inserted_id), **doc)
 ```
 
+### Socket.IO Service
+
+```python
+class SocketIOService:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.sio = socketio.AsyncServer(async_mode='asgi')
+        self.user_sessions: Dict[str, str] = {}
+        self._register_handlers()
+    
+    @self.sio.event
+    async def chat(self, sid, data):
+        user_id = self.user_sessions[sid]
+        response = await self.chat_service.process_message(user_id, data)
+        await self.sio.emit('conversation', response.model_dump(), room=sid)
+```
+
 ### Tests (override dep)
 
 ```python
@@ -498,8 +658,11 @@ app.dependency_overrides[get_db] = lambda: test_client["testdb"]
 ### Project Initialization
 
 ```bash
-# Modern setup with uv
+# Modern setup with uv and Socket.IO
 uv sync
+uv add python-socketio
 uv run python test_pydantic_fix.py  # Verify Pydantic v2 compatibility
+uv run python create_test_user.py   # Create test user for Socket.IO
 uv run uvicorn main:app --reload
+# Visit: http://localhost:8001/static/socketio_test.html
 ```
