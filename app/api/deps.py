@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.security import verify_token, verify_api_key
 from app.models.user import CurrentUser
 from app.repositories.user import UserRepository
+from app.infrastructure.llm import LLMManager
 
 security = HTTPBearer()
 
@@ -15,6 +16,14 @@ def get_db(request: Request) -> AsyncIOMotorDatabase:
         return request.app.state.db
     else:
         raise RuntimeError("Database not initialized in application state")
+
+
+def get_llm_client(request: Request) -> LLMManager:
+    """Get LLM manager instance from app state."""
+    if hasattr(request.app.state, 'llm_manager'):
+        return request.app.state.llm_manager
+    else:
+        raise RuntimeError("LLM manager not initialized in application state")
 
 
 async def get_current_user(

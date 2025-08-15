@@ -10,6 +10,7 @@ from app.core.logging import configure_logging
 from app.api.v1.routers import health, auth, conversations, tasks, chat
 from app.services.socketio_service import SocketIOService
 from app.infrastructure.database import create_mongodb_connection
+from app.infrastructure.llm import initialize_llm_clients
 
 # Configure structured logging
 configure_logging()
@@ -40,6 +41,15 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to initialize database", error=str(e))
         raise
     
+    # Initialize LLM clients
+    try:
+        # Store LLM manager in app state for dependency injection
+        app.state.llm_manager = await initialize_llm_clients()
+        
+    except Exception as e:
+        logger.error("Failed to initialize LLM clients", error=str(e))
+        raise
+    
     # Initialize Socket.IO service
     try:
         app.state.socketio_service = SocketIOService(app.state.db)
@@ -63,6 +73,11 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, 'socketio_service'):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
+    
+    # Shutdown LLM clients
+    if hasattr(app.state, 'llm_manager'):
+        await app.state.llm_manager.shutdown()
+        logger.info("LLM clients closed")
     
     # Shutdown database connection
     if hasattr(app.state, 'mongo_db'):
