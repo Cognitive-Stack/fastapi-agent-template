@@ -3,16 +3,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
-from motor.motor_asyncio import AsyncIOMotorClient
 import structlog
 
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.api.v1.routers import health, auth, conversations, tasks, chat
-from app.repositories.user import UserRepository
-from app.repositories.conversation import ConversationRepository
-from app.repositories.task import TaskRepository
 from app.services.socketio_service import SocketIOService
+from app.infrastructure.database import create_mongodb_connection
 
 # Configure structured logging
 configure_logging()
@@ -24,41 +21,38 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting up application", app_name=settings.app_name, env=settings.env)
     
-    # Initialize MongoDB connection
-    app.state.mongo = AsyncIOMotorClient(str(settings.mongo_uri))
-    app.state.settings = settings
-    
-    # Test database connection
+    # Initialize database connection
     try:
-        await app.state.mongo.admin.command('ping')
-        logger.info("Connected to MongoDB", db_name=settings.mongo_db_name)
+        mongo_db = await create_mongodb_connection(
+            uri=str(settings.mongo_uri), 
+            db_name=settings.mongo_db_name
+        )
+        
+        # Store database instances in app state for dependency injection
+        app.state.mongo_db = mongo_db
+        app.state.mongo = mongo_db.get_client()
+        app.state.db = mongo_db.get_database()
+        app.state.settings = settings
+        
+        logger.info("Database initialized successfully", db_name=settings.mongo_db_name)
+        
     except Exception as e:
-        logger.error("Failed to connect to MongoDB", error=str(e))
+        logger.error("Failed to initialize database", error=str(e))
         raise
     
-    # Create database indexes
-    db = app.state.mongo[settings.mongo_db_name]
-    try:
-        user_repo = UserRepository(db)
-        conversation_repo = ConversationRepository(db)
-        task_repo = TaskRepository(db)
-        
-        await user_repo.create_indexes()
-        await conversation_repo.create_indexes()
-        await task_repo.create_indexes()
-        
-        logger.info("Database indexes created successfully")
-    except Exception as e:
-        logger.warning("Failed to create some database indexes", error=str(e))
-    
     # Initialize Socket.IO service
-    app.state.socketio_service = SocketIOService(db)
-    logger.info("Socket.IO service initialized")
-    
-    # Mount Socket.IO application
-    socketio_asgi = app.state.socketio_service.get_asgi_app()
-    app.mount("/socket.io", socketio_asgi)
-    logger.info("Socket.IO mounted at /socket.io")
+    try:
+        app.state.socketio_service = SocketIOService(app.state.db)
+        logger.info("Socket.IO service initialized")
+        
+        # Mount Socket.IO application
+        socketio_asgi = app.state.socketio_service.get_asgi_app()
+        app.mount("/socket.io", socketio_asgi)
+        logger.info("Socket.IO mounted at /socket.io")
+        
+    except Exception as e:
+        logger.error("Failed to initialize Socket.IO service", error=str(e))
+        raise
     
     yield
     
@@ -70,7 +64,10 @@ async def lifespan(app: FastAPI):
         await app.state.socketio_service.sio.shutdown()
         logger.info("Socket.IO connections closed")
     
-    app.state.mongo.close()
+    # Shutdown database connection
+    if hasattr(app.state, 'mongo_db'):
+        await app.state.mongo_db.disconnect()
+        logger.info("Database connections closed")
 
 
 # Create FastAPI application

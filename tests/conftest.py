@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from main import app
 from app.core.config import settings
 from app.api.deps import get_db
+from infrastructure.database import create_mongodb_connection
 
 # Test database settings
 TEST_MONGO_URI = "mongodb://localhost:27017"
@@ -22,20 +23,28 @@ def event_loop():
 
 
 @pytest.fixture(scope="session")
-async def test_db():
+async def test_mongo_db():
     """Create test database connection."""
-    client = AsyncIOMotorClient(TEST_MONGO_URI)
-    db = client[TEST_DB_NAME]
-    yield db
-    # Cleanup: drop test database
-    await client.drop_database(TEST_DB_NAME)
-    client.close()
+    mongo_db = await create_mongodb_connection(
+        uri=TEST_MONGO_URI, 
+        db_name=TEST_DB_NAME
+    )
+    yield mongo_db
+    # Cleanup: drop test database and close connection
+    await mongo_db.get_client().drop_database(TEST_DB_NAME)
+    await mongo_db.disconnect()
+
+
+@pytest.fixture(scope="session")
+async def test_db(test_mongo_db):
+    """Get test database instance."""
+    return test_mongo_db.get_database()
 
 
 @pytest.fixture
 def override_get_db(test_db):
     """Override the get_db dependency for testing."""
-    async def _override_get_db():
+    def _override_get_db():
         return test_db
     return _override_get_db
 

@@ -11,7 +11,10 @@ security = HTTPBearer()
 
 def get_db(request: Request) -> AsyncIOMotorDatabase:
     """Get database instance from app state."""
-    return request.app.state.mongo[request.app.state.settings.mongo_db_name]
+    if hasattr(request.app.state, 'db'):
+        return request.app.state.db
+    else:
+        raise RuntimeError("Database not initialized in application state")
 
 
 async def get_current_user(
