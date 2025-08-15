@@ -70,5 +70,11 @@ class Task(BaseDocument):
     # Additional metadata
     metadata: dict = Field(default_factory=dict, description="Additional task metadata")
 
-    # State from agent
-    state: dict = Field(default_factory=dict, description="State from agent")
+    # Agent team state and type
+    agent_type: Optional[str] = Field(None, description="Type of agent that processed this task (e.g., 'soulcare', 'general')")
+    agent_state: dict = Field(default_factory=dict, description="Saved state from agent team")
+    
+    # Task execution details
+    started_at: Optional[str] = Field(None, description="ISO timestamp when task processing started")
+    completed_at: Optional[str] = Field(None, description="ISO timestamp when task processing completed")
+    error_message: Optional[str] = Field(None, description="Error message if task failed")

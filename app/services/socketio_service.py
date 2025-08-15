@@ -5,6 +5,7 @@ from app.core.logging import get_logger
 from app.core.security import verify_token
 from app.services.chat import ChatService
 from app.services.auth import AuthService
+from app.services.task import TaskService
 from app.api.v1.schemas import ChatRequest, ChatResponse
 from app.models.user import CurrentUser
 
@@ -19,6 +20,7 @@ class SocketIOService:
         self.llm_manager = llm_manager
         self.chat_service = ChatService(db)
         self.auth_service = AuthService(db)
+        self.task_service = TaskService(db)
         self.sio = socketio.AsyncServer(
             async_mode='asgi',
             cors_allowed_origins="*",  # Configure based on your needs
@@ -242,7 +244,41 @@ class SocketIOService:
                     }, room=sid)
                     return
                 
-                # Get the AutoGen LLM client for SoulcareTeam
+                conversation_id = data.get('conversation_id')
+                metadata = data.get('metadata', {})
+                metadata.update({
+                    'socket_session': sid,
+                    'realtime': True,
+                    'agent_type': 'soulcare'
+                })
+                
+                # Step 1: Create a soulcare task in the database
+                try:
+                    task = await self.task_service.create_soulcare_task(
+                        user_id=user_id,
+                        user_message=message,
+                        conversation_id=conversation_id,
+                        metadata=metadata
+                    )
+                    task_id = str(task.id)
+                    
+                    logger.info(f"Created soulcare task {task_id} for user {user_id}")
+                    
+                    # Emit task created event
+                    await self.sio.emit('task_created', {
+                        'task_id': task_id,
+                        'message': 'Soulcare task created successfully'
+                    }, room=sid)
+                    
+                except Exception as e:
+                    logger.error(f"Failed to create soulcare task: {e}")
+                    await self.sio.emit('error', {
+                        'message': 'Failed to create soulcare task',
+                        'error': str(e)
+                    }, room=sid)
+                    return
+                
+                # Step 2: Get the AutoGen LLM client and run soulcare team
                 try:
                     autogen_client = self.get_autogen_llm_client()
                     
@@ -251,17 +287,59 @@ class SocketIOService:
                     soulcare_team = SoulcareTeam(autogen_client)
                     
                     # Run soulcare conversation with Socket.IO streaming
-                    task_id = data.get('task_id', f"soulcare_{user_id}_{sid}")
-                    await soulcare_team.run_conversation_with_socket(
+                    result = await soulcare_team.run_conversation_with_socket(
                         user_message=message,
                         user_sid=sid,
                         task_id=task_id,
                         socketio_service=self
                     )
                     
+                    # Step 3: Save agent team state after completion
+                    try:
+                        agent_state = await soulcare_team.save_state()
+                        
+                        # Update task with agent state and conversation history
+                        await self.task_service.update_task_with_agent_state(
+                            task_id=task_id,
+                            agent_state=agent_state,
+                            status="completed" if result.get("success") else "failed",
+                            conversation_history=result.get("conversation_history", []),
+                            error_message=result.get("error")
+                        )
+                        
+                        logger.info(f"Updated task {task_id} with agent state and conversation history")
+                        
+                        # Emit final task completion
+                        await self.sio.emit('task_updated', {
+                            'task_id': task_id,
+                            'status': 'completed' if result.get("success") else "failed",
+                            'message': 'Task completed and state saved'
+                        }, room=sid)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to save agent state for task {task_id}: {e}")
+                        # Still update task as completed but log the error
+                        await self.task_service.update_task_with_agent_state(
+                            task_id=task_id,
+                            agent_state={"error": "Failed to save state"},
+                            status="completed",
+                            conversation_history=result.get("conversation_history", []),
+                            error_message=f"State save error: {str(e)}"
+                        )
+                    
                 except Exception as e:
                     logger.error(f"Soulcare team error: {e}")
+                    
+                    # Update task as failed
+                    await self.task_service.update_task_with_agent_state(
+                        task_id=task_id,
+                        agent_state={"error": "Soulcare team failed"},
+                        status="failed",
+                        error_message=str(e)
+                    )
+                    
                     await self.sio.emit('error', {
+                        'task_id': task_id,
                         'message': 'Failed to process soulcare request',
                         'error': str(e)
                     }, room=sid)
