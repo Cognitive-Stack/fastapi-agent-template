@@ -14,8 +14,9 @@ logger = get_logger(__name__)
 class SocketIOService:
     """Service for handling Socket.IO real-time chat functionality."""
     
-    def __init__(self, db: AsyncIOMotorDatabase):
+    def __init__(self, db: AsyncIOMotorDatabase, llm_manager=None):
         self.db = db
+        self.llm_manager = llm_manager
         self.chat_service = ChatService(db)
         self.auth_service = AuthService(db)
         self.sio = socketio.AsyncServer(
@@ -215,6 +216,62 @@ class SocketIOService:
                 
             except Exception as e:
                 logger.error(f"Leave conversation error for session {sid}: {e}")
+        
+        @self.sio.event
+        async def soulcare_chat(sid, data):
+            """Handle soulcare team chat messages."""
+            try:
+                user_id = self.user_sessions.get(sid)
+                if not user_id:
+                    await self.sio.emit('error', {
+                        'message': 'Not authenticated'
+                    }, room=sid)
+                    return
+                
+                # Validate message data
+                if not isinstance(data, dict) or 'message' not in data:
+                    await self.sio.emit('error', {
+                        'message': 'Invalid message format'
+                    }, room=sid)
+                    return
+                
+                message = data.get('message', '').strip()
+                if not message:
+                    await self.sio.emit('error', {
+                        'message': 'Message cannot be empty'
+                    }, room=sid)
+                    return
+                
+                # Get the AutoGen LLM client for SoulcareTeam
+                try:
+                    autogen_client = self.get_autogen_llm_client()
+                    
+                    # Import and create SoulcareTeam
+                    from app.agents.soulcare_team import SoulcareTeam
+                    soulcare_team = SoulcareTeam(autogen_client)
+                    
+                    # Run soulcare conversation with Socket.IO streaming
+                    task_id = data.get('task_id', f"soulcare_{user_id}_{sid}")
+                    await soulcare_team.run_conversation_with_socket(
+                        user_message=message,
+                        user_sid=sid,
+                        task_id=task_id,
+                        socketio_service=self
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Soulcare team error: {e}")
+                    await self.sio.emit('error', {
+                        'message': 'Failed to process soulcare request',
+                        'error': str(e)
+                    }, room=sid)
+                
+            except Exception as e:
+                logger.error(f"Soulcare chat error for session {sid}: {e}")
+                await self.sio.emit('error', {
+                    'message': 'Failed to process soulcare message',
+                    'error': str(e)
+                }, room=sid)
     
     async def broadcast_to_conversation(self, conversation_id: str, event: str, data: dict):
         """Broadcast message to all users in a conversation."""
@@ -229,6 +286,17 @@ class SocketIOService:
     def get_asgi_app(self):
         """Get the Socket.IO ASGI application."""
         return socketio.ASGIApp(self.sio)
+    
+    def get_autogen_llm_client(self):
+        """Get the raw AutoGen LLM client for use in Socket.IO handlers."""
+        if not self.llm_manager:
+            raise RuntimeError("LLM manager not available in SocketIOService")
+        
+        client = self.llm_manager.get_client()
+        if hasattr(client, 'client'):
+            return client.client
+        else:
+            raise RuntimeError("Client does not have underlying AutoGen client")
     
     async def get_connected_users(self) -> Dict[str, str]:
         """Get currently connected users."""

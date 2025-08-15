@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_core import CancellationToken
-from autogen_ext.models.openai import OpenAIChatCompletionClient, AzureOpenAIChatCompletionClient
 
 logging.basicConfig(
     level=logging.ERROR,
@@ -41,8 +40,8 @@ def search_song(song_name: str) -> str:
 class SoulcareTeam:
     """Soul Care Team using autogen framework with life advisor and song recommender agents"""
     
-    def __init__(self):
-        self.llm_client = create_llm_client()
+    def __init__(self, llm_client):
+        self.llm_client = llm_client
         self.max_turns = 10
         self.cancellation_token = CancellationToken()
         self.conversation_history: List[Dict[str, Any]] = []
@@ -213,36 +212,6 @@ class SoulcareTeam:
                     }
                 }, room=user_sid)
                 
-            return {
-                "error": str(e),
-                "conversation_history": self.conversation_history
-            }
-    
-    async def run_conversation(self, user_message: str) -> Dict[str, Any]:
-        """Run the soul care conversation (legacy method for backward compatibility)"""
-        try:
-            logger.info("Starting soul care conversation")
-            self.initial_message = user_message
-            self.conversation_history = []
-            
-            # Run conversation and collect messages
-            async for message in self.team.run_stream(
-                task=user_message,
-                cancellation_token=self.cancellation_token
-            ):
-                self.conversation_history.append({
-                    'timestamp': datetime.now().isoformat(),
-                    'message': str(message),
-                    'agent': getattr(message, 'source', 'system')
-                })
-            
-            return {
-                "success": True,
-                "conversation_history": self.conversation_history
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in soul care conversation: {str(e)}")
             return {
                 "error": str(e),
                 "conversation_history": self.conversation_history

@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize Socket.IO service
     try:
-        app.state.socketio_service = SocketIOService(app.state.db)
+        app.state.socketio_service = SocketIOService(app.state.db, app.state.llm_manager)
         logger.info("Socket.IO service initialized")
         
         # Mount Socket.IO application

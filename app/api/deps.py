@@ -26,6 +26,19 @@ def get_llm_client(request: Request) -> LLMManager:
         raise RuntimeError("LLM manager not initialized in application state")
 
 
+def get_autogen_llm_client(request: Request):
+    """Get raw AutoGen model client for use with AutoGen agents."""
+    if hasattr(request.app.state, 'llm_manager'):
+        # Get the raw AutoGen client from the manager
+        client = request.app.state.llm_manager.get_client()
+        if hasattr(client, 'client'):
+            return client.client
+        else:
+            raise RuntimeError("Client does not have underlying AutoGen client")
+    else:
+        raise RuntimeError("LLM manager not initialized in application state")
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncIOMotorDatabase = Depends(get_db)
