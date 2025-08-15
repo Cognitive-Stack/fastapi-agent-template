@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from main import app
 from app.core.config import settings
 from app.api.deps import get_db
-from infrastructure.database import create_mongodb_connection
+from app.infrastructure.database import create_mongodb_connection
 
 # Test database settings
 TEST_MONGO_URI = "mongodb://localhost:27017"
