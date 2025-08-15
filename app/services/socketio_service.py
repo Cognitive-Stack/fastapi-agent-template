@@ -303,7 +303,6 @@ class SocketIOService:
                             task_id=task_id,
                             agent_state=agent_state,
                             status="completed" if result.get("success") else "failed",
-                            conversation_history=result.get("conversation_history", []),
                             error_message=result.get("error")
                         )
                         

@@ -276,7 +276,6 @@ class TaskService:
         task_id: str, 
         agent_state: dict, 
         status: str = "completed",
-        conversation_history: Optional[List] = None,
         error_message: Optional[str] = None
     ) -> Optional[Task]:
         """Update task with agent team state and completion info."""
@@ -292,33 +291,6 @@ class TaskService:
         
         if status == "completed":
             update_dict["completion_percentage"] = 100
-        
-        # Add conversation history as messages if provided
-        if conversation_history:
-            messages = []
-            for msg in conversation_history:
-                # Extract message info from conversation history
-                if isinstance(msg, dict) and 'message' in msg:
-                    message_content = str(msg['message'])
-                    agent_name = msg.get('agent', 'system')
-                    
-                    # Map agent names to roles
-                    role = "assistant" if agent_name in ["LifeAdvisor", "SongRecommender"] else "system"
-                    
-                    chat_message = ChatMessage(
-                        role=role,
-                        content=message_content,
-                        metadata={
-                            "agent": agent_name,
-                            "timestamp": msg.get('timestamp', datetime.now().isoformat())
-                        }
-                    )
-                    messages.append(chat_message)
-            
-            if messages:
-                # Add all messages to the task
-                for message in messages:
-                    await self.task_repo.add_message_to_task(task_id, message)
         
         return await self.task_repo.update(task_id, update_dict)
     

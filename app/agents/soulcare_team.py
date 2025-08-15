@@ -1,9 +1,12 @@
 import logging
 import random
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+from autogen_agentchat.conditions import (ExternalTermination,
+                                          SourceMatchTermination)
+from autogen_agentchat.messages import (ModelClientStreamingChunkEvent,
+                                        TextMessage)
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_core import CancellationToken
 
@@ -44,8 +47,8 @@ class SoulcareTeam:
         self.llm_client = llm_client
         self.max_turns = 10
         self.cancellation_token = CancellationToken()
-        self.conversation_history: List[Dict[str, Any]] = []
         self.initial_message = ""
+        self.external_termination = ExternalTermination()
         
         # Create agents
         self._create_agents()
@@ -121,7 +124,6 @@ class SoulcareTeam:
 
         Select only one agent.
         """
-
         # Create the selector team
         self.team = SelectorGroupChat(
             participants=[self.life_advisor, self.song_recommender, self.user_proxy],
@@ -129,6 +131,7 @@ class SoulcareTeam:
             model_client=self.llm_client,
             allow_repeated_speaker=True,
             max_turns=self.max_turns,
+            termination_condition=SourceMatchTermination(sources=["User", "SongRecommender"]) | self.external_termination
         )
     
     async def _get_user_input(self, prompt: str, cancellation_token: Optional[CancellationToken] = None) -> str:
@@ -149,39 +152,23 @@ class SoulcareTeam:
         try:
             logger.info(f"Starting soul care conversation for task {task_id}")
             self.initial_message = user_message
-            self.conversation_history = []
-
-            if socketio_service:
-                # Emit start event
-                await socketio_service.sio.emit('task_message', {
-                    'task_id': task_id,
-                    'type': 'start',
-                    'data': {
-                        'message': 'Soul care team is starting...'
-                    }
-                }, room=user_sid)
 
             # Run the conversation stream
             async for message in self.team.run_stream(
-                task=user_message,
+                task=TextMessage(content=user_message, source="RealUser"),
                 cancellation_token=self.cancellation_token
             ):
-                # Store message in conversation history
-                self.conversation_history.append({
-                    'timestamp': datetime.now().isoformat(),
-                    'message': message
-                })
-                
-                if socketio_service:
+                if socketio_service and isinstance(message, ModelClientStreamingChunkEvent):
                     # Emit streaming message
                     await socketio_service.sio.emit('task_message', {
-                        'task_id': task_id,
-                        'type': 'stream',
-                        'data': {
-                            'message': str(message),
-                            'agent': getattr(message, 'source', 'system')
-                        }
-                    }, room=user_sid)
+                            'task_id': task_id,
+                            'type': 'stream',
+                            'data': {
+                                'message': str(message.content),
+                                'agent': getattr(message, 'source', 'system')
+                            }
+                        }, room=user_sid)
+                    
 
             if socketio_service:
                 # Emit completion event
@@ -189,14 +176,12 @@ class SoulcareTeam:
                     'task_id': task_id,
                     'type': 'complete',
                     'data': {
-                        'message': 'Soul care conversation completed',
-                        'conversation_history': self.conversation_history
+                        'message': 'Soul care conversation completed'
                     }
                 }, room=user_sid)
 
             return {
                 "success": True,
-                "conversation_history": self.conversation_history
             }
             
         except Exception as e:
@@ -213,8 +198,7 @@ class SoulcareTeam:
                 }, room=user_sid)
                 
             return {
-                "error": str(e),
-                "conversation_history": self.conversation_history
+                "error": str(e)
             }
     
     async def save_state(self) -> Dict[str, Any]:
@@ -239,13 +223,4 @@ class SoulcareTeam:
         """Cancel the ongoing conversation"""
         self.cancellation_token.cancel()
         logger.info("Soul care conversation cancelled")
-    
-    def get_conversation_summary(self) -> Dict[str, Any]:
-        """Get a summary of the current conversation"""
-        return {
-            "total_messages": len(self.conversation_history),
-            "agents_involved": list(set([msg.get('agent', 'unknown') for msg in self.conversation_history])),
-            "start_time": self.conversation_history[0]['timestamp'] if self.conversation_history else None,
-            "last_message_time": self.conversation_history[-1]['timestamp'] if self.conversation_history else None
-        }
     
