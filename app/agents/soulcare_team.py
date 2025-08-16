@@ -71,8 +71,7 @@ class SoulcareTeam:
             
             After understanding their situation, suggest moving to song recommendation 
             by ending your message with: "Let's find a song that resonates with your situation."
-            """,
-            model_client_stream=True
+            """
         )
 
         # Create the Song Recommender assistant agent
@@ -80,24 +79,18 @@ class SoulcareTeam:
             name="SongRecommender",
             model_client=self.llm_client,
             tools=[search_song],
-            max_tool_iterations=2,
             system_message="""
-            You are a thoughtful song recommender that suggests music based on people's life situations.
+            You are a song recommender that provides music based on people's life situations.
             When it's your turn:
             1. Analyze the conversation context and emotional state
-            2. Explain why you think a particular type of song would be meaningful
-            3. Use the search_song tool to find a song
-            4. Share the song link and explain why you think it might resonate
-            
-            Then ask for user feedback with:
-            "How does this song resonate with your situation?"
-            """,
-            model_client_stream=True
+            2. Use the search_song tool to find an appropriate song
+            3. Share the song link
+            """
         )
 
         # Create the user proxy agent
         self.user_proxy = UserProxyAgent(
-            name="User",
+            name="UserProxy",
             input_func=self._get_user_input,  # Custom input function
         )
     
@@ -109,17 +102,17 @@ class SoulcareTeam:
 
         Roles:
         - LifeAdvisor: Explores user's situation, provides guidance and emotional support
-        - SongRecommender: Suggests music based on user's emotional state and situation
-        - User: User's input and feedback
+        - SongRecommender: Searches for songs to match the user's emotional needs
+        - UserProxy: User's input and feedback
 
         Current conversation context:
         {history}
 
         Select the next agent from {participants} based on these rules:
         1. If the user just shared new information about their situation, select LifeAdvisor
-        2. If LifeAdvisor has provided guidance and suggested music, select SongRecommender
+        2. If LifeAdvisor has provided guidance AND has gathered sufficient emotional context about the user's situation AND has suggested music, select SongRecommender
         3. After SongRecommender shares a song, select User for feedback
-        4. If unsure, select User to gather more information
+        4. If unsure or need more emotional context, select LifeAdvisor to gather more information
         5. If the user has provided feedback, select User to gather more information
 
         Select only one agent.
@@ -129,16 +122,15 @@ class SoulcareTeam:
             participants=[self.life_advisor, self.song_recommender, self.user_proxy],
             selector_prompt=selector_prompt,
             model_client=self.llm_client,
-            allow_repeated_speaker=True,
             max_turns=self.max_turns,
-            termination_condition=SourceMatchTermination(sources=["User", "SongRecommender"]) | self.external_termination
+            termination_condition=SourceMatchTermination(sources=["UserProxy", "SongRecommender"]) | self.external_termination
         )
     
     async def _get_user_input(self, prompt: str, cancellation_token: Optional[CancellationToken] = None) -> str:
         """Custom input function that returns the initial user message"""
         # For now, we'll use the initial message stored in the class
         # In a real implementation, this could be connected to a web interface
-        return self.initial_message
+        return "Handover to user"
     
     async def run_conversation_with_socket(
         self, 
@@ -155,11 +147,16 @@ class SoulcareTeam:
 
             # Run the conversation stream
             async for message in self.team.run_stream(
-                task=TextMessage(content=user_message, source="RealUser"),
+                task=TextMessage(content=user_message, source="User"),
                 cancellation_token=self.cancellation_token
             ):
-                if socketio_service and isinstance(message, ModelClientStreamingChunkEvent):
+                if socketio_service and isinstance(message, TextMessage):
                     # Emit streaming message
+                    print("--------------------------------")
+                    print(f"---- Message Source: {message.source}")
+                    print(f"---- Message Type: {message.type}")
+                    print(f"---- Message Content: {message.content}")
+                    print("--------------------------------")
                     await socketio_service.sio.emit('task_message', {
                             'task_id': task_id,
                             'type': 'stream',
