@@ -1,3 +1,4 @@
+import datetime
 from typing import List, Optional, Literal
 from pydantic import Field, ConfigDict
 from app.models.base import BaseDocument, PyObjectId
@@ -75,6 +76,6 @@ class Task(BaseDocument):
     agent_state: dict = Field(default_factory=dict, description="Saved state from agent team")
     
     # Task execution details
-    started_at: Optional[str] = Field(None, description="ISO timestamp when task processing started")
-    completed_at: Optional[str] = Field(None, description="ISO timestamp when task processing completed")
+    started_at: Optional[datetime] = Field(None, description="Datetime when task processing started")
+    completed_at: Optional[datetime] = Field(None, description="Datetime when task processing completed")
     error_message: Optional[str] = Field(None, description="Error message if task failed")

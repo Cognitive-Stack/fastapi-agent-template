@@ -259,7 +259,7 @@ class TaskService:
             "tags": ["soulcare", "life-advice", "emotional-support"],
             "completion_percentage": 0,
             "agent_type": "soulcare",
-            "started_at": datetime.now().isoformat(),
+            "started_at": datetime.now(),
             "metadata": metadata or {}
         }
         
@@ -282,7 +282,7 @@ class TaskService:
         update_dict = {
             "agent_state": agent_state,
             "status": status,
-            "completed_at": datetime.now().isoformat()
+            "completed_at": datetime.now()
         }
         
         if error_message:
@@ -314,4 +314,13 @@ class TaskService:
     
     async def get_task_by_id_with_user_check(self, task_id: str, user_id: str) -> Optional[Task]:
         """Get task by ID with user ownership check."""
-        return await self.task_repo.get_user_task(task_id, user_id) 
+        return await self.task_repo.get_user_task(task_id, user_id)
+    
+    async def get_conversation_state(self, conversation_id: str, user_id: str) -> Optional[dict]:
+        """Get the state of the latest completed task for a conversation."""
+        # First check if the conversation belongs to the user
+        conversation = await self.conversation_repo.get_user_conversation(conversation_id, user_id)
+        if not conversation:
+            return None
+        
+        return await self.task_repo.get_conversation_state(conversation_id) 

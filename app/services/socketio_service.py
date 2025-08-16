@@ -262,11 +262,12 @@ class SocketIOService:
                     )
                     task_id = str(task.id)
                     
-                    logger.info(f"Created soulcare task {task_id} for user {user_id}")
+                    logger.info(f"Created soulcare task {task_id} for user {user_id} in conversation {task.conversation_id}")
                     
                     # Emit task created event
                     await self.sio.emit('task_created', {
                         'task_id': task_id,
+                        'conversation_id': str(task.conversation_id),
                         'message': 'Soulcare task created successfully'
                     }, room=sid)
                     
@@ -285,6 +286,10 @@ class SocketIOService:
                     # Import and create SoulcareTeam
                     from app.agents.soulcare_team import SoulcareTeam
                     soulcare_team = SoulcareTeam(autogen_client)
+                    if conversation_id:
+                        agent_state = await self.task_service.get_conversation_state(conversation_id, user_id)
+                        if agent_state:
+                            await soulcare_team.load_state(agent_state)
                     
                     # Run soulcare conversation with Socket.IO streaming
                     result = await soulcare_team.run_conversation_with_socket(

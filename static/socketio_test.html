@@ -350,6 +350,12 @@
             socket.on('task_created', (data) => {
                 addEventLog('TASK_CREATED', data);
                 addTaskInfo(`Task created: ${data.task_id}`, 'created');
+                
+                // Set conversation ID if provided
+                if (data.conversation_id) {
+                    document.getElementById('conversationId').value = data.conversation_id;
+                    addMessage(`Conversation ID set to: ${data.conversation_id}`, 'system');
+                }
             });
 
             socket.on('task_message', (data) => {
