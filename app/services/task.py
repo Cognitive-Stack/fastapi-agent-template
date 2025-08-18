@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple
+from datetime import datetime
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.v1.schemas import TaskCreate, TaskUpdate, AddMessageToTask
@@ -39,19 +40,11 @@ class TaskService:
             )
             conversation_id = str(conversation.id)
         
-        # Create the initial user message
-        user_message = ChatMessage(
-            role="user",
-            content=task_data.user_message,
-            metadata=task_data.metadata
-        )
-        
         # Create task data
         task_dict = {
             "conversation_id": ObjectId(conversation_id),
             "user_id": ObjectId(user_id),
             "user_message": task_data.user_message,
-            "messages": [user_message.model_dump()],
             "status": "pending",
             "priority": task_data.priority,
             "category": task_data.category,
@@ -226,4 +219,108 @@ class TaskService:
     
     async def get_pending_tasks(self, limit: int = 100) -> List[Task]:
         """Get pending tasks for background processing."""
-        return await self.task_repo.get_tasks_by_status("pending", limit) 
+        return await self.task_repo.get_tasks_by_status("pending", limit)
+    
+    async def create_soulcare_task(
+        self, 
+        user_id: str, 
+        user_message: str, 
+        conversation_id: Optional[str] = None,
+        metadata: Optional[dict] = None
+    ) -> Task:
+        """Create a new soulcare task."""
+        # If no conversation_id provided, create a new conversation
+        if not conversation_id:
+            from app.api.v1.schemas import ConversationCreate
+            
+            # Generate conversation title from user message (first 50 chars)
+            title = f"Soulcare: {user_message[:40]}" + ("..." if len(user_message) > 40 else "")
+            
+            conversation_data = ConversationCreate(
+                title=title,
+                description="Soulcare conversation",
+                metadata={"auto_generated": True, "type": "soulcare"}
+            )
+            
+            conversation = await self.conversation_service.create_conversation(
+                user_id=user_id,
+                conversation_data=conversation_data
+            )
+            conversation_id = str(conversation.id)
+        
+        # Create task data for soulcare
+        task_dict = {
+            "conversation_id": ObjectId(conversation_id),
+            "user_id": ObjectId(user_id),
+            "user_message": user_message,
+            "status": "in_progress",  # Start as in_progress since we're processing immediately
+            "priority": "medium",
+            "category": "soulcare",
+            "tags": ["soulcare", "life-advice", "emotional-support"],
+            "completion_percentage": 0,
+            "agent_type": "soulcare",
+            "started_at": datetime.now(),
+            "metadata": metadata or {}
+        }
+        
+        # Create the task
+        task = await self.task_repo.create(task_dict)
+        
+        # Add task to conversation
+        await self.conversation_service.add_task_to_conversation(conversation_id, str(task.id))
+        
+        return task
+    
+    async def update_task_with_agent_state(
+        self, 
+        task_id: str, 
+        agent_state: dict, 
+        status: str = "completed",
+        error_message: Optional[str] = None
+    ) -> Optional[Task]:
+        """Update task with agent team state and completion info."""
+        update_dict = {
+            "agent_state": agent_state,
+            "status": status,
+            "completed_at": datetime.now()
+        }
+        
+        if error_message:
+            update_dict["error_message"] = error_message
+            update_dict["status"] = "failed"
+        
+        if status == "completed":
+            update_dict["completion_percentage"] = 100
+        
+        return await self.task_repo.update(task_id, update_dict)
+    
+    async def get_soulcare_tasks(
+        self,
+        user_id: str,
+        skip: int = 0,
+        limit: int = 20,
+        status: Optional[str] = None
+    ) -> Tuple[List[Task], int]:
+        """Get soulcare tasks for a user."""
+        return await self.task_repo.get_user_tasks(
+            user_id=user_id,
+            status=status,
+            category="soulcare",
+            skip=skip,
+            limit=limit,
+            sort_by="created_at",
+            sort_order=-1
+        )
+    
+    async def get_task_by_id_with_user_check(self, task_id: str, user_id: str) -> Optional[Task]:
+        """Get task by ID with user ownership check."""
+        return await self.task_repo.get_user_task(task_id, user_id)
+    
+    async def get_conversation_state(self, conversation_id: str, user_id: str) -> Optional[dict]:
+        """Get the state of the latest completed task for a conversation."""
+        # First check if the conversation belongs to the user
+        conversation = await self.conversation_repo.get_user_conversation(conversation_id, user_id)
+        if not conversation:
+            return None
+        
+        return await self.task_repo.get_conversation_state(conversation_id) 

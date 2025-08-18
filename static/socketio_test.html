@@ -93,9 +93,27 @@
             background-color: #dc3545;
             color: white;
         }
+        .message.soulcare {
+            background-color: #6f42c1;
+            color: white;
+            margin-right: 20%;
+        }
+        .message.task {
+            background-color: #17a2b8;
+            color: white;
+            font-style: italic;
+        }
         .timestamp {
             font-size: 0.8em;
             opacity: 0.7;
+        }
+        .task-info {
+            background-color: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-size: 0.9em;
         }
     </style>
 </head>
@@ -129,7 +147,7 @@
                 <input type="text" id="conversationId" placeholder="Conversation ID (optional)" style="width: 200px;">
                 <br>
                 <textarea id="messageInput" placeholder="Type your message here..." style="width: 70%; height: 60px;"></textarea>
-                <button onclick="sendMessage()" id="sendBtn" disabled>Send</button>
+                <button onclick="sendSoulcareMessage()" id="sendBtn" disabled>Send Chat</button>
             </div>
         </div>
 
@@ -177,11 +195,27 @@
             log.scrollTop = log.scrollHeight;
         }
 
+        function addTaskInfo(content, status = 'info') {
+            const messages = document.getElementById('messages');
+            const taskDiv = document.createElement('div');
+            taskDiv.className = 'task-info';
+            
+            const timestamp = new Date().toLocaleTimeString();
+            taskDiv.innerHTML = `
+                <strong>Task ${status.toUpperCase()}:</strong> ${content}
+                <div class="timestamp">${timestamp}</div>
+            `;
+            
+            messages.appendChild(taskDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
         function updateStatus(connected) {
             const status = document.getElementById('status');
             const connectBtn = document.getElementById('connectBtn');
             const disconnectBtn = document.getElementById('disconnectBtn');
             const sendBtn = document.getElementById('sendBtn');
+            const soulcareBtn = document.getElementById('soulcareBtn');
             const joinBtn = document.getElementById('joinBtn');
             const leaveBtn = document.getElementById('leaveBtn');
 
@@ -191,6 +225,7 @@
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
                 sendBtn.disabled = false;
+                soulcareBtn.disabled = false;
                 joinBtn.disabled = false;
                 leaveBtn.disabled = false;
             } else {
@@ -199,6 +234,7 @@
                 connectBtn.disabled = false;
                 disconnectBtn.disabled = true;
                 sendBtn.disabled = true;
+                soulcareBtn.disabled = true;
                 joinBtn.disabled = true;
                 leaveBtn.disabled = true;
             }
@@ -309,6 +345,39 @@
                 addMessage(`Connection error: ${error.message}`, 'error');
                 updateStatus(false);
             });
+
+            // Soulcare and Task Events
+            socket.on('task_created', (data) => {
+                addEventLog('TASK_CREATED', data);
+                addTaskInfo(`Task created: ${data.task_id}`, 'created');
+                
+                // Set conversation ID if provided
+                if (data.conversation_id) {
+                    document.getElementById('conversationId').value = data.conversation_id;
+                    addMessage(`Conversation ID set to: ${data.conversation_id}`, 'system');
+                }
+            });
+
+            socket.on('task_message', (data) => {
+                addEventLog('TASK_MESSAGE', data);
+                
+                if (data.type === 'start') {
+                    addMessage(data.data.message, 'task');
+                } else if (data.type === 'stream') {
+                    const agent = data.data.agent || 'system';
+                    const messageType = agent === 'LifeAdvisor' || agent === 'SongRecommender' ? 'soulcare' : 'system';
+                    addMessage(`[${agent}] ${data.data.message}`, messageType);
+                } else if (data.type === 'complete') {
+                    addMessage(data.data.message, 'task');
+                } else if (data.type === 'error') {
+                    addMessage(`Task Error: ${data.data.message}`, 'error');
+                }
+            });
+
+            socket.on('task_updated', (data) => {
+                addEventLog('TASK_UPDATED', data);
+                addTaskInfo(`Task ${data.task_id} ${data.status}: ${data.message}`, data.status);
+            });
         }
 
         function disconnect() {
@@ -346,6 +415,41 @@
 
             socket.emit('chat', data);
             addEventLog('CHAT_SENT', data);
+            
+            // Clear message input
+            document.getElementById('messageInput').value = '';
+        }
+
+        function sendSoulcareMessage() {
+            const message = document.getElementById('messageInput').value.trim();
+            const conversationId = document.getElementById('conversationId').value.trim();
+
+            if (!message) {
+                alert('Please enter a message');
+                return;
+            }
+
+            if (!socket || !socket.connected) {
+                alert('Not connected to server');
+                return;
+            }
+
+            const data = {
+                message: message,
+                metadata: {
+                    client: 'test_client',
+                    timestamp: new Date().toISOString(),
+                    type: 'soulcare'
+                }
+            };
+
+            if (conversationId) {
+                data.conversation_id = conversationId;
+            }
+
+            socket.emit('soulcare_chat', data);
+            addEventLog('SOULCARE_CHAT_SENT', data);
+            addMessage(`[You to Soulcare Team] ${message}`, 'user');
             
             // Clear message input
             document.getElementById('messageInput').value = '';
@@ -391,13 +495,14 @@
         document.getElementById('messageInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                sendSoulcareMessage();
             }
         });
 
         // Initial status
         updateStatus(false);
         addMessage('Welcome! Please login to get a token, then connect to start chatting.', 'system');
+        addMessage('Use "Send Chat" for regular chat or "Send to Soulcare Team" for life advice and emotional support.', 'system');
     </script>
 </body>
 </html> 

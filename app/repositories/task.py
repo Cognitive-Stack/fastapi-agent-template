@@ -161,12 +161,39 @@ class TaskRepository(BaseRepository[Task]):
             sort_order=1  # Oldest first
         )
     
+    async def get_conversation_state(self, conversation_id: str) -> Optional[dict]:
+        """Get the state of the latest completed task for a conversation."""
+        if not ObjectId.is_valid(conversation_id):
+            return None
+        
+        filter_dict = {
+            "conversation_id": ObjectId(conversation_id),
+            "completed_at": {"$exists": True}
+        }
+        
+        # Use MongoDB aggregation to only return the agent_state field
+        pipeline = [
+            {"$match": filter_dict},
+            {"$sort": {"completed_at": -1}},
+            {"$limit": 1},
+            {"$project": {"agent_state": 1, "_id": 0}}
+        ]
+        
+        cursor = self.collection.aggregate(pipeline)
+        result = await cursor.to_list(length=1)
+        
+        if result and result[0].get("agent_state"):
+            return result[0]["agent_state"]
+        
+        return None
+    
     async def create_indexes(self):
         """Create database indexes for optimal performance."""
         # Compound indexes
         await self.collection.create_index([("user_id", 1), ("created_at", -1)])
         await self.collection.create_index([("user_id", 1), ("conversation_id", 1)])
         await self.collection.create_index([("conversation_id", 1), ("created_at", -1)])
+        await self.collection.create_index([("conversation_id", 1), ("completed_at", -1)])
         await self.collection.create_index([("user_id", 1), ("status", 1)])
         await self.collection.create_index([("user_id", 1), ("priority", 1)])
         
@@ -176,6 +203,7 @@ class TaskRepository(BaseRepository[Task]):
         await self.collection.create_index("category")
         await self.collection.create_index("created_at")
         await self.collection.create_index("updated_at")
+        await self.collection.create_index("completed_at")
     
     def _get_current_time(self):
         """Get current UTC time."""

@@ -1,3 +1,4 @@
+import datetime
 from typing import List, Optional, Literal
 from pydantic import Field, ConfigDict
 from app.models.base import BaseDocument, PyObjectId
@@ -68,4 +69,13 @@ class Task(BaseDocument):
     actual_duration: Optional[int] = Field(None, description="Actual duration in minutes")
     
     # Additional metadata
-    metadata: dict = Field(default_factory=dict, description="Additional task metadata") 
+    metadata: dict = Field(default_factory=dict, description="Additional task metadata")
+
+    # Agent team state and type
+    agent_type: Optional[str] = Field(None, description="Type of agent that processed this task (e.g., 'soulcare', 'general')")
+    agent_state: dict = Field(default_factory=dict, description="Saved state from agent team")
+    
+    # Task execution details
+    started_at: Optional[datetime] = Field(None, description="Datetime when task processing started")
+    completed_at: Optional[datetime] = Field(None, description="Datetime when task processing completed")
+    error_message: Optional[str] = Field(None, description="Error message if task failed")

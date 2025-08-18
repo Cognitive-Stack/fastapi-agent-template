@@ -1,4 +1,4 @@
-from typing import Literal, Union
+from typing import Literal, Union, Optional
 from pydantic import SecretStr, field_validator, AnyUrl
 from pydantic_settings import BaseSettings
 
@@ -24,6 +24,28 @@ class Settings(BaseSettings):
     
     # Logging
     log_level: str = "INFO"
+    
+    # LLM Configuration
+    llm_provider: Literal["openai", "azure", "anthropic", "gemini"] = "azure"
+    
+    # Azure OpenAI
+    azure_openai_api_key: Optional[SecretStr] = None
+    azure_openai_endpoint: Optional[str] = None
+    azure_openai_deployment: Optional[str] = None
+    azure_openai_model: str = "gpt-4.1-nano"
+    azure_openai_api_version: str = "2025-04-01-preview"
+    
+    # OpenAI
+    openai_api_key: Optional[SecretStr] = None
+    openai_model: str = "gpt-4.1-nano"
+    
+    # Anthropic
+    anthropic_api_key: Optional[SecretStr] = None
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    
+    # Gemini
+    gemini_api_key: Optional[SecretStr] = None
+    gemini_model: str = "gemini-2.5-flash-lite"
     
     @field_validator("allowed_origins", mode="before")
     @classmethod

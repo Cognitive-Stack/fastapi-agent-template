@@ -5,6 +5,7 @@ from app.core.logging import get_logger
 from app.core.security import verify_token
 from app.services.chat import ChatService
 from app.services.auth import AuthService
+from app.services.task import TaskService
 from app.api.v1.schemas import ChatRequest, ChatResponse
 from app.models.user import CurrentUser
 
@@ -14,10 +15,12 @@ logger = get_logger(__name__)
 class SocketIOService:
     """Service for handling Socket.IO real-time chat functionality."""
     
-    def __init__(self, db: AsyncIOMotorDatabase):
+    def __init__(self, db: AsyncIOMotorDatabase, llm_manager=None):
         self.db = db
+        self.llm_manager = llm_manager
         self.chat_service = ChatService(db)
         self.auth_service = AuthService(db)
+        self.task_service = TaskService(db)
         self.sio = socketio.AsyncServer(
             async_mode='asgi',
             cors_allowed_origins="*",  # Configure based on your needs
@@ -141,20 +144,7 @@ class SocketIOService:
                 )
                 
                 # Process message through chat service
-                chat_response = await self.chat_service.process_message(user_id, chat_request)
-                # Convert to dict for socket emission
-                response_data = {
-                    'task_id': chat_response.task_id,
-                    'conversation_id': chat_response.conversation_id,
-                    'user_message': chat_response.user_message.model_dump() if chat_response.user_message else None,
-                    'assistant_responses': [msg.model_dump() for msg in chat_response.assistant_responses],
-                }
-                
-                # Send response back to client via 'conversation' event
-                room_name = f"user_{user_id}"
-                await self.sio.emit('conversation', response_data, room=room_name)
-                
-                logger.info(f"Chat response sent to user {user_id} for task {chat_response.task_id}")
+                await self.chat_service.process_message(user_id, chat_request)
                 
             except Exception as e:
                 logger.error(f"Chat error for session {sid}: {e}")
@@ -228,6 +218,142 @@ class SocketIOService:
                 
             except Exception as e:
                 logger.error(f"Leave conversation error for session {sid}: {e}")
+        
+        @self.sio.event
+        async def soulcare_chat(sid, data):
+            """Handle soulcare team chat messages."""
+            try:
+                user_id = self.user_sessions.get(sid)
+                if not user_id:
+                    await self.sio.emit('error', {
+                        'message': 'Not authenticated'
+                    }, room=sid)
+                    return
+                
+                # Validate message data
+                if not isinstance(data, dict) or 'message' not in data:
+                    await self.sio.emit('error', {
+                        'message': 'Invalid message format'
+                    }, room=sid)
+                    return
+                
+                message = data.get('message', '').strip()
+                if not message:
+                    await self.sio.emit('error', {
+                        'message': 'Message cannot be empty'
+                    }, room=sid)
+                    return
+                
+                conversation_id = data.get('conversation_id')
+                metadata = data.get('metadata', {})
+                metadata.update({
+                    'socket_session': sid,
+                    'realtime': True,
+                    'agent_type': 'soulcare'
+                })
+                
+                # Step 1: Create a soulcare task in the database
+                try:
+                    task = await self.task_service.create_soulcare_task(
+                        user_id=user_id,
+                        user_message=message,
+                        conversation_id=conversation_id,
+                        metadata=metadata
+                    )
+                    task_id = str(task.id)
+                    
+                    logger.info(f"Created soulcare task {task_id} for user {user_id} in conversation {task.conversation_id}")
+                    
+                    # Emit task created event
+                    await self.sio.emit('task_created', {
+                        'task_id': task_id,
+                        'conversation_id': str(task.conversation_id),
+                        'message': 'Soulcare task created successfully'
+                    }, room=sid)
+                    
+                except Exception as e:
+                    logger.error(f"Failed to create soulcare task: {e}")
+                    await self.sio.emit('error', {
+                        'message': 'Failed to create soulcare task',
+                        'error': str(e)
+                    }, room=sid)
+                    return
+                
+                # Step 2: Get the AutoGen LLM client and run soulcare team
+                try:
+                    autogen_client = self.get_autogen_llm_client()
+                    
+                    # Import and create SoulcareTeam
+                    from app.agents.soulcare_team import SoulcareTeam
+                    soulcare_team = SoulcareTeam(autogen_client)
+                    if conversation_id:
+                        agent_state = await self.task_service.get_conversation_state(conversation_id, user_id)
+                        if agent_state:
+                            await soulcare_team.load_state(agent_state)
+                    
+                    # Run soulcare conversation with Socket.IO streaming
+                    result = await soulcare_team.run_conversation_with_socket(
+                        user_message=message,
+                        user_sid=sid,
+                        task_id=task_id,
+                        socketio_service=self
+                    )
+                    
+                    # Step 3: Save agent team state after completion
+                    try:
+                        agent_state = await soulcare_team.save_state()
+                        
+                        # Update task with agent state and conversation history
+                        await self.task_service.update_task_with_agent_state(
+                            task_id=task_id,
+                            agent_state=agent_state,
+                            status="completed" if result.get("success") else "failed",
+                            error_message=result.get("error")
+                        )
+                        
+                        logger.info(f"Updated task {task_id} with agent state and conversation history")
+                        
+                        # Emit final task completion
+                        await self.sio.emit('task_updated', {
+                            'task_id': task_id,
+                            'status': 'completed' if result.get("success") else "failed",
+                            'message': 'Task completed and state saved'
+                        }, room=sid)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to save agent state for task {task_id}: {e}")
+                        # Still update task as completed but log the error
+                        await self.task_service.update_task_with_agent_state(
+                            task_id=task_id,
+                            agent_state={"error": "Failed to save state"},
+                            status="completed",
+                            conversation_history=result.get("conversation_history", []),
+                            error_message=f"State save error: {str(e)}"
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Soulcare team error: {e}")
+                    
+                    # Update task as failed
+                    await self.task_service.update_task_with_agent_state(
+                        task_id=task_id,
+                        agent_state={"error": "Soulcare team failed"},
+                        status="failed",
+                        error_message=str(e)
+                    )
+                    
+                    await self.sio.emit('error', {
+                        'task_id': task_id,
+                        'message': 'Failed to process soulcare request',
+                        'error': str(e)
+                    }, room=sid)
+                
+            except Exception as e:
+                logger.error(f"Soulcare chat error for session {sid}: {e}")
+                await self.sio.emit('error', {
+                    'message': 'Failed to process soulcare message',
+                    'error': str(e)
+                }, room=sid)
     
     async def broadcast_to_conversation(self, conversation_id: str, event: str, data: dict):
         """Broadcast message to all users in a conversation."""
@@ -242,6 +368,17 @@ class SocketIOService:
     def get_asgi_app(self):
         """Get the Socket.IO ASGI application."""
         return socketio.ASGIApp(self.sio)
+    
+    def get_autogen_llm_client(self):
+        """Get the raw AutoGen LLM client for use in Socket.IO handlers."""
+        if not self.llm_manager:
+            raise RuntimeError("LLM manager not available in SocketIOService")
+        
+        client = self.llm_manager.get_client()
+        if hasattr(client, 'client'):
+            return client.client
+        else:
+            raise RuntimeError("Client does not have underlying AutoGen client")
     
     async def get_connected_users(self) -> Dict[str, str]:
         """Get currently connected users."""
