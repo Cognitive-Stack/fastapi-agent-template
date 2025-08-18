@@ -5,13 +5,38 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.security import verify_token, verify_api_key
 from app.models.user import CurrentUser
 from app.repositories.user import UserRepository
+from app.infrastructure.llm import LLMManager
 
 security = HTTPBearer()
 
 
 def get_db(request: Request) -> AsyncIOMotorDatabase:
     """Get database instance from app state."""
-    return request.app.state.mongo[request.app.state.settings.mongo_db_name]
+    if hasattr(request.app.state, 'db'):
+        return request.app.state.db
+    else:
+        raise RuntimeError("Database not initialized in application state")
+
+
+def get_llm_client(request: Request) -> LLMManager:
+    """Get LLM manager instance from app state."""
+    if hasattr(request.app.state, 'llm_manager'):
+        return request.app.state.llm_manager
+    else:
+        raise RuntimeError("LLM manager not initialized in application state")
+
+
+def get_autogen_llm_client(request: Request):
+    """Get raw AutoGen model client for use with AutoGen agents."""
+    if hasattr(request.app.state, 'llm_manager'):
+        # Get the raw AutoGen client from the manager
+        client = request.app.state.llm_manager.get_client()
+        if hasattr(client, 'client'):
+            return client.client
+        else:
+            raise RuntimeError("Client does not have underlying AutoGen client")
+    else:
+        raise RuntimeError("LLM manager not initialized in application state")
 
 
 async def get_current_user(
