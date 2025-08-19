@@ -1,11 +1,10 @@
 import logging
-import random
 from typing import Any, Dict, List, Optional
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.conditions import (ExternalTermination,
                                           SourceMatchTermination)
-from autogen_agentchat.messages import (ToolCallSummaryMessage,
+from autogen_agentchat.messages import (ToolCallSummaryMessage, ToolCallRequestEvent,
                                         TextMessage)
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_core import CancellationToken
@@ -16,28 +15,68 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from app.core.config import settings
+try:
+    from googleapiclient.discovery import build
+except Exception:  # pragma: no cover
+    build = None
 
-def search_song(song_name: str) -> str:
+
+def search_song(query: str, language: str = None) -> str:
     """
-    Search for a song on the internet.
     Args:
-        song_name: The name of the song to search for.
+        query (str): Description of user's music preferences like genre, mood, artist, era etc.
+        language (str, optional): Preferred song language. Defaults to None.
+
     Returns:
-        A URL of the song.
+        str: YouTube video URL wrapped in <youtube_url> tags if successful.
+             Error message if API key is missing or search fails.
+
+    Example:
+        >>> search_song("upbeat jazz", "english")
+        '<youtube_url>https://www.youtube.com/watch?v=abc123</youtube_url>'
+        >>> search_song("", None) 
+        'YouTube search unavailable. Please configure YOUTUBE_API_KEY.'
     """
-    songs = [
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",  # Never Gonna Give You Up
-        "https://www.youtube.com/watch?v=y6120QOlsfU",  # Darude - Sandstorm
-        "https://www.youtube.com/watch?v=L_jWHffIx5E",  # All Star
-        "https://www.youtube.com/watch?v=9bZkp7q19f0",  # Gangnam Style
-        "https://www.youtube.com/watch?v=fJ9rUzIMcZQ",  # Bohemian Rhapsody
-        "https://www.youtube.com/watch?v=YykjpeuMNEk",  # Hymn for the Weekend
-        "https://www.youtube.com/watch?v=09R8_2nJtjg",  # Maroon 5 - Sugar
-        "https://www.youtube.com/watch?v=OPf0YbXqDm0",  # Mark Ronson - Uptown Funk
-        "https://www.youtube.com/watch?v=pRpeEdMmmQ0",  # Imagine Dragons - Believer
-        "https://www.youtube.com/watch?v=YVkUvmDQ3HY"   # Ed Sheeran - Shape of You
-    ]
-    return f"<youtube_url>{random.choice(songs)}</youtube_url>"
+    query = f"{(query or "").strip() or "popular music"} in {language}"
+
+    api_key = None
+    try:
+        api_key = settings.youtube_api_key.get_secret_value() if settings.youtube_api_key else None
+    except Exception:
+        api_key = None
+
+    if not api_key or build is None:
+        logger.warning("YouTube API key not configured or client not available.")
+        return "YouTube search unavailable. Please configure YOUTUBE_API_KEY."
+
+    try:
+        yt = build("youtube", "v3", developerKey=api_key)
+        req = yt.search().list(
+            q=query,
+            part="snippet",
+            type="video",
+            videoCategoryId=10,
+            maxResults=1,
+            order="relevance",
+            safeSearch="moderate",
+        )
+        res = req.execute()
+        items = res.get("items", [])
+        if items:
+            print(f"---- YouTube search results: {items[0]}")
+            video_id = items[0].get("id", {}).get("videoId")
+            video_detail = yt.videos().list(
+                part="snippet,contentDetails,statistics",
+                id=video_id,
+            ).execute()
+            print(f"---- YouTube video detail: {video_detail}")
+            if video_id:
+                return f"<youtube_url>https://www.youtube.com/watch?v={video_id}</youtube_url>"
+        return "No matching song found on YouTube."
+    except Exception as e:
+        logger.error(f"YouTube search failed: {e}")
+        return "Failed to search YouTube."
 
 
 class SoulcareTeam:
@@ -68,9 +107,7 @@ class SoulcareTeam:
             2. Listen actively and show understanding
             3. Provide supportive and constructive feedback
             4. Help them gain clarity about their challenges and goals
-            
-            After understanding their situation, suggest moving to song recommendation 
-            by ending your message with: "Let's find a song that resonates with your situation."
+        
             """
         )
 
@@ -165,7 +202,7 @@ class SoulcareTeam:
                                 'agent': getattr(message, 'source', 'system')
                             }
                         }, room=user_sid)
-                if isinstance(message, ToolCallSummaryMessage):
+                elif isinstance(message, ToolCallSummaryMessage):
                     print("--------------------------------")
                     print(f"---- Message Source: {message.source}")
                     print(f"---- Message Type: {message.type}")
@@ -180,6 +217,12 @@ class SoulcareTeam:
                             'agent': getattr(message, 'source', 'system')
                         }
                     }, room=user_sid)
+                elif isinstance(message, ToolCallRequestEvent):
+                    print("--------------------------------")
+                    print(f"---- Message Source: {message.source}")
+                    print(f"---- Message Type: {message.type}")
+                    print(f"---- Message Content: {message.content}")
+                    print("--------------------------------")
 
             if socketio_service:
                 # Emit completion event

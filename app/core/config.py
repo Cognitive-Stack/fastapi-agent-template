@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[SecretStr] = None
     gemini_model: str = "gemini-2.5-flash-lite"
     
+    # YouTube
+    youtube_api_key: Optional[SecretStr] = None
+    
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
